@@ -41,7 +41,7 @@ def run(phi_true, n, mu_0=0, sigma_0=pi, m=200):
 
         m_cct_total = m_cct_total + m_cct
 
-        # quantum computation part
+        # quantum computation gives the e in practice
         p = (1-cos(m_cct*(phi_true+theta_cct)))/2
         e = np.random.binomial(1, p)
 
