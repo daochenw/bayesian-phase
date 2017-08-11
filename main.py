@@ -40,8 +40,11 @@ def run(phi_true, n, mu_0=0, sigma_0=pi, m=200):
         theta_cct = 1/(sqrt(2*pi)*sigma_0)
 
         m_cct_total = m_cct_total + m_cct
+
+        # quantum computation part
         p = (1-cos(m_cct*(phi_true+theta_cct)))/2
         e = np.random.binomial(1, p)
+
         mu, sigma = update(mu_0, sigma_0, e, m_cct, theta_cct, m)
         output[i, 0], output[i, 1], output[i, 2] = mu, m_cct_total, sigma
         mu_0, sigma_0 = mu, sigma
