@@ -1,8 +1,10 @@
 # program to generate figure 1 and figure 2 of the paper arXiv: 1508.00869v1
 # "Efficient Bayesian Phase Estimation"
-from math import sin, cos, pi, sqrt, log, ceil
+from math import sin, cos, pi, sqrt, log, ceil, e as eu
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.integrate import quad
+from scipy.optimize import minimize
 
 
 def update(mu, sigma, e, m_cct, theta_cct, m, k=1):
@@ -11,7 +13,7 @@ def update(mu, sigma, e, m_cct, theta_cct, m, k=1):
     x = np.random.normal(mu, sigma, m)
     u = np.random.uniform(0, 1, m)
     for i in range(m):
-        p__ex = (1 + (-1) ** e * cos(m_cct * (x[i] + theta_cct))) / 2
+        p__ex = (1 + (1-2*e) * cos(m_cct * (x[i] + theta_cct))) / 2
         if p__ex >= k*u[i]:
             x_inc = x_inc + cos(x[i])
             y_inc = y_inc + sin(x[i])
@@ -27,6 +29,75 @@ def update(mu, sigma, e, m_cct, theta_cct, m, k=1):
     return mu_, sigma_
 
 
+def bayes_risk_integrand(phi, cct, mu, sigma):
+
+    m_cct, theta_cct = cct[0], cct[1]
+
+    m_cct = round(m_cct)
+
+    # analytical solution for best estimator of phi
+    e = np.array([0, 1])
+
+    temp_0 = (1 - 2 * e) * (eu ** (2j * mu * m_cct) - eu ** (-2j * theta_cct * m_cct))
+
+    temp_1 = (1 - 2 * e) * (eu ** (2j * mu * m_cct) + eu ** (-2j * theta_cct * m_cct))
+
+    temp_2 = 2 * eu ** (m_cct * (1j * (mu - theta_cct) + sigma ** 2 * m_cct / 2))
+
+    phi_opt = mu + (1j * sigma ** 2 * m_cct) * temp_0 / (temp_1 + temp_2)
+
+    # x_opt should be real itself (checked), this just removes any small imaginary part due to imprecision
+    phi_opt = phi_opt.real
+
+    # put the optimal estimator into the Bayes risk integrand
+    # the phi_opt is getting recalculated when it doesn't need to be
+
+    integrand = (phi-phi_opt)**2*0.5*(1+np.array([1, -1])*cos(m_cct*(phi+theta_cct))) * \
+                (sqrt(2*pi*sigma**2))**(-1)*eu**(-((phi-mu)/sigma)**2)
+
+    integrand = sum(integrand)
+
+    return integrand
+
+
+def bayes_risk(cct, mu, sigma):
+
+    integral = quad(bayes_risk_integrand, -np.inf, np.inf, args=(cct, mu, sigma))
+
+    # print("integral is", integral, "error is", err)
+    # print("% error is", abs(err)/integral)
+
+    return integral[0]
+
+
+def optimal_experiment(mu, sigma):
+
+    #print("I'm minimizing")
+    res = minimize(bayes_risk, np.array([np.ceil(1.25/sigma), -(mu+sigma)]),
+                   args=(mu, sigma),
+                   method='Nelder-Mead')
+
+    #print("I've done the minimizing")
+    # bounds = ((0, None), (None, None))
+
+    cct = res.x
+    cct[0] = round(cct[0])
+
+    #print("the suggested M: ", np.ceil(1.25/sigma), "theta_1: ", -mu-sigma, "and theta_2: ", -mu+sigma)
+    #print("my optimal M: ", cct[0], "and theta: ", cct[1])
+    #print(1/sigma)
+
+    # sense check
+    th_risk = (1-1/eu)*sigma**2
+    risk = bayes_risk(cct, mu, sigma)
+
+    # assert risk >= th_risk
+
+    # print("% error = ", (risk-th_risk)/th_risk)
+
+    return res.x
+
+
 def run(phi_true, n, mu_0=0, sigma_0=pi, m=200):
     output = np.zeros([n, 3])
     m_cct_total = 0
@@ -36,23 +107,29 @@ def run(phi_true, n, mu_0=0, sigma_0=pi, m=200):
             return output
 
         # particle guess heuristic for m_cct and theta_cct according to eqn (4)
-        m_cct = ceil(1.25/sigma_0)
-        theta_cct = 1/(sqrt(2*pi)*sigma_0)
+        if False:
+            m_cct = ceil(1.25/sigma_0)
+            theta_cct = np.random.normal(mu_0, sigma_0)
+
+        # local Bayes risk minimiser
+        if True:
+            opt = optimal_experiment(mu_0, sigma_0)
+            m_cct = opt[0]
+            theta_cct = opt[1]
 
         m_cct_total = m_cct_total + m_cct
-
-        # here is where quantum computation would come in, giving e
         p = (1-cos(m_cct*(phi_true+theta_cct)))/2
         e = np.random.binomial(1, p)
-
         mu, sigma = update(mu_0, sigma_0, e, m_cct, theta_cct, m)
         output[i, 0], output[i, 1], output[i, 2] = mu, m_cct_total, sigma
         mu_0, sigma_0 = mu, sigma
     return output
 
 
-def performance(n_exp, n_true=500, mode=0):
+def performance(n_exp, n_true=20, mode=0):
     # mode=0 for Fig. 1, and mode=1 for Fig. 2
+    # n_true is the number of random initial choices of the true eigenphase (over which the median error is taken)
+    # n_exp is the number of experiments performed to try to estimate each true eigenphase
 
     # the algorithm seems quite sensitive to how well the initial guess is within the true_phi
     if mode == 0:
@@ -80,15 +157,16 @@ def performance(n_exp, n_true=500, mode=0):
 
     return comp, comp_med
 
-data_1 = performance(50, mode=0)[1]
-data_2 = performance(50, mode=1)[1]
-plt.subplot(121)
-plt.semilogy(data_1[:, 0], data_1[:, 2], basey=10)
-plt.title('Figure 1')
-plt.xlabel('Experiment number')
-plt.ylabel('Median error')
-plt.subplot(122)
-plt.loglog(data_2[:, 1], data_2[:, 2], basex=10, basey=10)
-plt.title('Figure 2')
-plt.xlabel('Median Applications of U')
-plt.show(block=True)
+if True:
+    data_1 = performance(20, mode=0)[1]
+    data_2 = performance(20, mode=1)[1]
+    plt.subplot(121)
+    plt.semilogy(data_1[:, 0], data_1[:, 2], basey=10)
+    plt.title('Figure 1')
+    plt.xlabel('Experiment number')
+    plt.ylabel('Median error')
+    plt.subplot(122)
+    plt.loglog(data_2[:, 1], data_2[:, 2], basex=10, basey=10)
+    plt.title('Figure 2')
+    plt.xlabel('Median Applications of U')
+    plt.show(block=True)
